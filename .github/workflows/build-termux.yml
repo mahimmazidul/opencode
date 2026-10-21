@@ -7,6 +7,9 @@
 
 name: build-termux
 
+# Manual only, on purpose. The binary churns a ~200 MB release asset on every
+# run, so it should not rebuild itself every time termux/** changes.
+# Uncomment the `push:` block below to get auto-rebuilds back.
 on:
   workflow_dispatch:
     inputs:
@@ -18,11 +21,11 @@ on:
         description: "Publish the binary to the rolling termux-build release"
         type: boolean
         default: true
-  push:
-    branches: [dev]
-    paths:
-      - ".github/workflows/build-termux.yml"
-      - "termux/**"
+  # push:
+  #   branches: [dev]
+  #   paths:
+  #     - ".github/workflows/build-termux.yml"
+  #     - "termux/**"
 
 permissions:
   contents: write
@@ -78,7 +81,7 @@ jobs:
       # install URL stays stable:
       #   https://github.com/<owner>/<repo>/releases/download/termux-build/opencode
       - name: Publish rolling release
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_release || github.event_name == 'push'
+        if: inputs.publish_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

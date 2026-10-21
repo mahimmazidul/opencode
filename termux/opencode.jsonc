@@ -1,0 +1,52 @@
+// Phone-tuned config for opencode on Termux.
+// Copy to: ~/.config/opencode/opencode.jsonc
+//
+// Every key below exists in the official v2 schema (https://opencode.ai/config.json).
+// The comments say what each one buys you on a 3–6 GB phone.
+{
+  // The built-in updater downloads a stock glibc binary that Android cannot
+  // exec. Update by re-running termux/install-termux.sh instead.
+  "update": "disable",
+
+  // Language servers are the single biggest RAM consumer after the runtime
+  // itself: typescript-language-server alone can sit at 300–500 MB, and there
+  // is one per language you touch. Run `"lsp": false` on a small phone, or
+  // keep LSP on and accept the cost if you need go-to-definition.
+  "lsp": false,
+
+  // MCP servers are child processes (usually Node, ~50–200 MB each). Keep the
+  // list empty on mobile unless you actually need one.
+  "mcp": {
+    "servers": {}
+  },
+
+  // Tool output is truncated and spilled to disk past these limits instead of
+  // being kept in memory as part of the conversation. Defaults are 2000 lines;
+  // halving them is cheap insurance on a phone.
+  "tool_output": {
+    "max_lines": 1000,
+    "max_bytes": 65536
+  },
+
+  // Compact the context earlier so long sessions don't grow without bound.
+  "compaction": {
+    "auto": true
+  },
+
+  // No background "warming" requests: saves battery and data on mobile.
+  "warming": false,
+
+  // Fewer filesystem watches (Android's inotify is limited).
+  "watcher": {
+    "ignore": [
+      "**/node_modules/**",
+      "**/.git/**",
+      "**/dist/**",
+      "**/build/**"
+    ]
+  },
+
+  // Snapshot tracking writes git objects for undo/redo. Off saves disk churn;
+  // turn it back on if you rely on `opencode` undo.
+  "snapshots": false
+}
