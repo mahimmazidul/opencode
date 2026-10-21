@@ -58,15 +58,22 @@ apt_has() { apt-cache policy "$1" 2>/dev/null | grep -q 'Candidate: [0-9]'; }
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# runs a package-manager command, shows real output on failure instead of
-# hiding it behind >/dev/null (that is what made the last run unreadable)
+# Runs a package-manager command with its output STREAMED (so a multi-minute
+# download never looks like a hang) while keeping a log for the failure case.
 pm() {
   local tag="$1"; shift
   local log="$TMP/pm-$tag.log"
-  if "$@" >"$log" 2>&1; then return 0; fi
-  warn "failed: $*"
-  tail -n 12 "$log" | sed 's/^/    /' >&2
-  return 1
+  local rc=0
+  set +e
+  "$@" 2>&1 | tee "$log"
+  rc=${PIPESTATUS[0]}
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    warn "failed (exit $rc): $*"
+    tail -n 12 "$log" | sed 's/^/    /' >&2
+    return "$rc"
+  fi
+  return 0
 }
 
 while [ $# -gt 0 ]; do
@@ -116,6 +123,7 @@ ensure_glibc() {
   if [ -f "$LOADER" ] && apt_has patchelf-glibc; then return 0; fi
 
   say "installing Termux glibc runtime (~36 MB)"
+  say "this downloads roughly 40 MB - on mobile data it will sit here for a few minutes"
   if ! pm glibc-repo pkg install -y glibc-repo; then
     warn "could not install glibc-repo (see the error above)"
     return 1
