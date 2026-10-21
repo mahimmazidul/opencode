@@ -100,7 +100,9 @@ print_diag() {
   echo "  arch          : $(uname -m)"
   echo "  termux version: ${TERMUX_VERSION:-unknown}"
   echo "  glibc loader  : $([ -f "$LOADER" ] && echo present || echo MISSING)"
-  echo "  patchelf      : $(have patchelf && patchelf --version 2>/dev/null || echo missing)"
+  echo "  patchelf      : $(have patchelf && patchelf --version 2>/dev/null || ([ -x "$GLIBC/bin/patchelf" ] && echo "$GLIBC/bin/patchelf (unrunnable until LD_* cleared)" || echo missing))"
+  echo "  LD_PRELOAD    : ${LD_PRELOAD:-<unset>}"
+  echo "  LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-<unset>}"
   echo "  glibc pkg     : $(apt-cache policy glibc 2>/dev/null | awk '/Candidate/{print $2}')"
   echo "  glibc repo    : $([ -f "$GLIBC_LIST" ] && echo "configured ($(grep -c '^deb' "$GLIBC_LIST") lines)" || echo "NOT configured")"
   if [ -f "$GLIBC_LIST" ]; then sed 's/^/                  /' "$GLIBC_LIST"; fi
@@ -120,7 +122,7 @@ esac
 # glibc + patchelf-glibc pull ~36 MB. binutils-glibc is NOT installed: it was
 # only needed to link the old DNS shim, which no longer exists.
 ensure_glibc() {
-  if [ -f "$LOADER" ] && apt_has patchelf-glibc; then return 0; fi
+  if [ -f "$LOADER" ]; then return 0; fi
 
   say "installing Termux glibc runtime (~36 MB)"
   say "this downloads roughly 40 MB - on mobile data it will sit here for a few minutes"
@@ -165,9 +167,7 @@ HINT
 fi
 [ -f "$LOADER" ] || die "glibc loader missing at $LOADER"
 
-PATCHELF="$(command -v patchelf || true)"
-[ -x "$PATCHELF" ] || PATCHELF="$GLIBC/bin/patchelf"
-[ -x "$PATCHELF" ] || die "patchelf not found (pkg install patchelf-glibc)"
+# patchelf is optional: the published artifact arrives already patched.
 
 # ----------------------------------------------------------- dns + tools ----
 # Termux's glibc reads $PREFIX/glibc/etc/resolv.conf (the path is baked into
@@ -235,9 +235,50 @@ head -c 4 "$TMP/opencode" | od -An -tx1 | grep -q "7f 45 4c 46" || die "not an E
 MACHINE="$(od -An -tx1 -j18 -N2 "$TMP/opencode" | tr -d ' \n')"
 [ "$MACHINE" = "b700" ] || die "not an aarch64 binary (e_machine=$MACHINE)"
 
-say "patching ELF interpreter -> $LOADER"
 chmod +x "$TMP/opencode"
-"$PATCHELF" --set-interpreter "$LOADER" "$TMP/opencode" || die "patchelf failed"
+
+# The release artifact is already patched in CI (PT_INTERP ->
+# $PREFIX/glibc/lib/ld-linux-aarch64.so.1), so normally there is nothing to do.
+# Only a locally built binary, or a different Termux prefix, needs this.
+patch_interp() {
+  local bin="$1"
+  if grep -aqF -- "$LOADER" "$bin"; then
+    say "interpreter already points at Termux glibc - no patchelf needed"
+    return 0
+  fi
+  say "patching ELF interpreter -> $LOADER"
+  local -a cands=()
+  [ -x "$GLIBC/bin/patchelf" ] && cands+=("$GLIBC/bin/patchelf")
+  local p; p="$(command -v patchelf || true)"
+  [ -n "$p" ] && [ "$p" != "$GLIBC/bin/patchelf" ] && cands+=("$p")
+  have grun && cands+=("grun patchelf")
+  if [ ${#cands[@]} -eq 0 ]; then
+    warn "no patchelf found; installing glibc-runner (it provides 'grun patchelf')"
+    pm runner pkg install -y glibc-runner || true
+    have grun && cands+=("grun patchelf")
+  fi
+  [ ${#cands[@]} -gt 0 ] || die "patchelf unavailable - pkg install glibc-runner, or use the pre-patched release"
+
+  local c
+  for c in "${cands[@]}"; do
+    # LD_PRELOAD / LD_LIBRARY_PATH must be cleared: termux-exec's bionic
+    # preload and any exported glibc path make glibc binaries fail with
+    # "libc.so: invalid ELF header" - that is the usual patchelf failure.
+    if env -u LD_PRELOAD -u LD_LIBRARY_PATH $c --set-interpreter "$LOADER" "$bin" 2>"$TMP/patch.err"; then
+      if grep -aqF -- "$LOADER" "$bin"; then
+        say "patched with $c"
+        return 0
+      fi
+      warn "$c exited 0 but the interpreter did not change"
+      continue
+    fi
+    warn "$c failed: $(head -n1 "$TMP/patch.err" 2>/dev/null)"
+  done
+  warn "LD_PRELOAD=${LD_PRELOAD:-<unset>}  LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>}"
+  die "could not patch the interpreter"
+}
+
+patch_interp "$TMP/opencode"
 
 # ------------------------------------------------------------- install ------
 say "verifying with Termux glibc"

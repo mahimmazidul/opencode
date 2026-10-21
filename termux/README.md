@@ -126,10 +126,10 @@ Everything below is measured from the real repositories and the real artifact, n
 | Item | Download |
 |---|---|
 | `opencode.gz` — the app, gzipped (209.6 MB raw) | **98.1 MB** |
-| Termux `glibc` + `patchelf-glibc` + deps (incl. `gcc-libs-glibc` 24.3 MB) | **35.5 MB** |
+| Termux `glibc` + deps (incl. `linux-api-headers-glibc`) — `patchelf` no longer needed | **~11 MB** |
 | `ripgrep` + `git` + deps (skipped if you already have them) | **9.0 MB** |
 | apt index refresh (`pkg update`, main + glibc repos) | **~4 MB** |
-| **Total, first install** | **≈ 147 MB** |
+| **Total, first install** | **≈ 122 MB** |
 | Subsequent rebuild/reinstall (everything already present) | **≈ 98 MB** |
 
 What it used to cost, and why it changed:
@@ -333,6 +333,25 @@ If you want auto-rebuilds back, uncomment:
     paths:
       - ".github/workflows/build-termux.yml"
       - "termux/**"
+```
+
+## `patchelf: invalid ELF header`
+
+```
+patchelf: error while loading shared libraries: .../glibc/lib/libc.so: invalid ELF header
+```
+
+`libc.so` in the glibc tree is a **linker script** (a text file), not a shared object, so any attempt to
+load it as one fails exactly like this. It usually means `LD_PRELOAD` or `LD_LIBRARY_PATH` is exporting
+a glibc path into the shell (a leftover from an older guide, or from `grun`).
+
+Since **`ad0505d`+** this cannot block you: the interpreter rewrite now happens in CI, and the installer
+skips patching when the binary is already patched. If you still hit it:
+
+```bash
+unset LD_PRELOAD LD_LIBRARY_PATH
+bash install-termux.sh            # skips patchelf entirely
+env -u LD_PRELOAD -u LD_LIBRARY_PATH $PREFIX/glibc/bin/patchelf     --set-interpreter $PREFIX/glibc/lib/ld-linux-aarch64.so.1 ./opencode   # only if really needed
 ```
 
 ## `pkg install glibc` fails (the most common first-run problem)

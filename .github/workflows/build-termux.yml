@@ -80,6 +80,19 @@ jobs:
       # Rolling release: tag "termux-build" is recreated on every run, so the
       # install URL stays stable:
       #   https://github.com/<owner>/<repo>/releases/download/termux-build/opencode
+      # Rewrite PT_INTERP here, not on the phone. Termux's patchelf-glibc is
+      # frequently unusable on-device ("libc.so: invalid ELF header"), and the
+      # Termux prefix is a constant, so the artifact ships pre-patched.
+      - name: Patch interpreter for Termux
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq patchelf
+          patchelf --set-interpreter /data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1 "$OUT_BIN"
+          readelf -l "$OUT_BIN" | grep -i interpreter
+          grep -aqF /data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1 "$OUT_BIN"
+          echo "interpreter points at Termux glibc"
+
       # 209 MB -> 98 MB with gzip -9, which is ~111 MB less mobile data per
       # install. gzip is in the Termux base install, so decoding is free.
       - name: Compress
