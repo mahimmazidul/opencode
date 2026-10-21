@@ -1,0 +1,30 @@
+name: Build for Termux (linux/arm64)
+
+on:
+  workflow_dispatch:   # manual trigger from the Actions tab
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod   # reads version from your go.mod
+
+      - name: Build static arm64 binary
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags="-s -w" -o opencode .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-linux-arm64
+          path: opencode
