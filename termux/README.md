@@ -415,6 +415,7 @@ packages.
 | `cannot execute: required file not found` | `PT_INTERP` still `/lib/ld-linux-aarch64.so.1` | re-run the installer (or `patchelf --set-interpreter $PREFIX/glibc/lib/ld-linux-aarch64.so.1`) |
 | `CANNOT LINK EXECUTABLE "cat": ... bad ELF magic` | `LD_LIBRARY_PATH`/`LD_PRELOAD` exported into your shell | `unset LD_LIBRARY_PATH LD_PRELOAD`; never source the launcher, run it |
 | loads, but every API call fails / no DNS | Android has no `/etc/resolv.conf` | make sure `$PREFIX/glibc/etc/resolv.conf` has a reachable `nameserver` |
+| `OpenCode 1.18.0 or newer is required to use the free tier` | the build reports a `0.0.0-termux-N` version (set by `OPENCODE_CHANNEL`), and that version is sent in the User-Agent `opencode/<channel>/<version>/cli` | fixed in `e15d02c`: the version is now read from `packages/cli/package.json` and the UA is `opencode/latest/2.1.2/cli` |
 | `Bad system call` / exit 159 at startup | Android 10/11 seccomp traps `statx`/`clone3` that Bun calls directly | use Android 12+, or the seccomp shim from `HanSoBored/opencode-termux` |
 | TUI renders garbage / monochrome | `TERM` wrong | `export TERM=xterm-256color` |
 | grep/glob tools error | `ripgrep` missing | `pkg install ripgrep` |
@@ -494,7 +495,7 @@ Rolling release: <https://github.com/mahimmazidul/opencode/releases/tag/termux-b
 
 | Asset | Size | Notes |
 |---|---|---|
-| `opencode.gz` | 98.1 MB | ELF aarch64, `PT_INTERP` already points at Termux's glibc loader, embedded Bun 1.4.2 |
+| `opencode.gz` | 98.0 MB | ELF aarch64, `PT_INTERP` already points at Termux's glibc loader, embedded Bun 1.4.2, reports **opencode 2.1.2** (UA `opencode/latest/2.1.2/cli`) |
 | `opencode.gz.sha256` | 78 B | verified by the installer |
 
 <https://github.com/mahimmazidul/opencode/releases/download/termux-build/opencode.gz>
