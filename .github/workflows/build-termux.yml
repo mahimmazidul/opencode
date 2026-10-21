@@ -1,30 +1,116 @@
-name: Build for Termux (linux/arm64)
+# Builds the opencode v2 CLI (packages/cli) as a self-contained linux/arm64 Bun
+# standalone, then publishes it to a rolling "termux-build" release so the
+# phone can install it with termux/install-termux.sh.
+#
+# Replaces the previous workflow, which ran `go build .` — this repo has no Go
+# code and no go.mod; the build entrypoint is packages/cli/script/build.ts.
+
+name: build-termux
 
 on:
-  workflow_dispatch:   # manual trigger from the Actions tab
+  workflow_dispatch:
+    inputs:
+      skip_web_ui:
+        description: "Skip embedding the web UI (faster build; `opencode web` will serve nothing)"
+        type: boolean
+        default: false
+      publish_release:
+        description: "Publish the binary to the rolling termux-build release"
+        type: boolean
+        default: true
+  push:
+    branches: [dev]
+    paths:
+      - ".github/workflows/build-termux.yml"
+      - "termux/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-termux-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keeps the build self-contained and deterministic: no npm version lookup,
+  # no release notes, quoted-nothing preview channel.
+  OPENCODE_CHANNEL: termux
+  # The Bun runtime that gets embedded must be 1.4.2 (package.json pin).
+  BUN_COMPILE_RELEASE: bun-v1.4.2
+  OUT_BIN: packages/cli/dist/cli-linux-arm64/bin/opencode
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod   # reads version from your go.mod
+      # Installs Bun 1.4.2 (from package.json packageManager) + Node 24 and
+      # runs `bun install --frozen-lockfile`.
+      - uses: ./.github/actions/setup-bun
 
-      - name: Build static arm64 binary
-        env:
-          GOOS: linux
-          GOARCH: arm64
-          CGO_ENABLED: 0
+      # Cross-compiles to linux/arm64. build.ts also re-installs @opentui/core
+      # and @opencode-ai/pty with --os="*" --cpu="*", which is what makes the
+      # arm64 native bits end up in an x64-hosted cross build.
+      - name: Build CLI (linux/arm64)
         run: |
-          go build -ldflags="-s -w" -o opencode .
+          bun ./packages/cli/script/build.ts \
+            --target=opencode-linux-arm64 \
+            ${{ inputs.skip_web_ui && '--skip-web-ui' || '' }}
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Inspect artifact
+        run: |
+          set -eux
+          ls -lh "$OUT_BIN"
+          file "$OUT_BIN"
+          readelf -l "$OUT_BIN" | grep -i interpreter || true
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: opencode-linux-arm64
-          path: opencode
+          name: opencode-termux-arm64
+          path: ${{ env.OUT_BIN }}
+          if-no-files-found: error
+          # Already a ~200 MB executable; compressing it only burns minutes.
+          compression-level: 0
+
+      # Rolling release: tag "termux-build" is recreated on every run, so the
+      # install URL stays stable:
+      #   https://github.com/<owner>/<repo>/releases/download/termux-build/opencode
+      - name: Publish rolling release
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_release || github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eux
+          gh release delete termux-build --cleanup-tag --yes || true
+          gh release create termux-build "$OUT_BIN" \
+            --title "Termux build (linux/arm64)" \
+            --notes "Self-contained Bun standalone for Termux/aarch64.
+
+          Built from \`${{ github.sha }}\` on $(date -u +%F).
+
+          Install on the phone:
+
+          \`\`\`
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/dev/termux/install-termux.sh -o install-termux.sh
+          bash install-termux.sh
+          \`\`\`
+
+          This is a glibc linux/arm64 binary; the installer points its ELF
+          interpreter at Termux's glibc loader and adds the launcher + resolver
+          shim."
+
+      - name: Summary
+        run: |
+          {
+            echo "### opencode for Termux"
+            echo ""
+            echo "- binary: \`$OUT_BIN\`"
+            echo "- install URL: https://github.com/${{ github.repository }}/releases/download/termux-build/opencode"
+            echo ""
+            echo '```'
+            echo "curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/dev/termux/install-termux.sh -o install-termux.sh"
+            echo "bash install-termux.sh"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
