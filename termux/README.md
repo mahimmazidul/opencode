@@ -408,6 +408,43 @@ If none of that works, the glibc route is blocked on your device and you do not 
 bionic build in [Prebuilt alternative](#prebuilt-alternative-guysoftopencode-termux) requires **zero** apt
 packages.
 
+## Keyboard vanishes and tapping won't bring it back
+
+**Cause:** opencode's TUI enables terminal **mouse capture** by default. With capture on, a tap on the
+terminal is delivered to the app as a mouse click, so Termux never treats it as "focus the input" and
+never re-opens the soft keyboard. Termux documents the same behaviour for `vim`/`zellij`: *"It is not
+shown because vim listens for mouse events. Specifically an on-screen click will set the cursor
+position and Termux will not toggle the soft keyboard."*
+
+**Fix (permanent, in the app):** turn mouse capture off
+
+```jsonc
+// ~/.config/opencode/opencode.jsonc
+{
+  "mouse": false
+}
+```
+
+That key is real (`packages/tui/src/config/index.tsx`, default `true`) and lives at the **top level** of
+the config. The installer and the shipped `opencode.jsonc` now write it. Trade-off: no mouse scrolling or
+clicking in the TUI — use the keyboard (`PgUp`/`PgDn`, arrows), which is what you want on a phone anyway.
+
+**Fix (right now, without restarting anything):** swipe in from the **left edge** of the screen to open
+the Termux drawer, then tap **KEYBOARD**. That forces the IME back up even while an app holds mouse
+capture.
+
+Other things that help on Android:
+
+- Run opencode inside `tmux` (`pkg install tmux`, `tmux`, then `opencode`). If the IME dies, detach
+  (`Ctrl-b d`) and re-attach (`tmux a`) — the session survives, and the redraw re-registers the
+  terminal. You stop losing your session to an app restart.
+- `~/.termux/termux.properties`: `back-key=escape` (so Back sends ESC instead of leaving), and
+  `soft-keyboard-toggle-behaviour=show/hide`. Apply with `termux-reload-settings`.
+- Termux resizes the pty on every IME show/hide, which makes full-screen TUIs repaint; that is expected
+  and not a crash.
+- If you mostly type long prompts on the phone, `opencode serve` + the web UI in your browser sidesteps
+  the terminal IME entirely — a real `<textarea>` and a real keyboard.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
