@@ -103,30 +103,56 @@ jobs:
           ls -l opencode.gz
           cat opencode.gz.sha256
 
+      # Rolling release. Deliberately does NOT delete/recreate: that churn left
+      # the release stuck as a DRAFT (asset URL 404s for everyone) on run #4.
+      # Create once, then upload --clobber, then force it public and verify
+      # that an unauthenticated client can actually fetch it.
       - name: Publish rolling release
         if: inputs.publish_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eux
-          gh release delete termux-build --cleanup-tag --yes || true
-          gh release create termux-build opencode.gz opencode.gz.sha256 \
-            --title "Termux build (linux/arm64)" \
-            --notes "Self-contained Bun standalone for Termux/aarch64.
+          cat > notes.md <<'NOTES'
+          Self-contained Bun standalone for Termux / Android aarch64.
 
-          Built from \`${{ github.sha }}\` on $(date -u +%F).
+          `opencode.gz` is the linux/arm64 CLI, gzipped (209 MB -> 98 MB). The
+          ELF interpreter is already rewritten to
+          `/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1`, so
+          no patchelf runs on the phone. `opencode.gz.sha256` is verified by the
+          installer.
 
-          Install on the phone (about 147 MB of data in total):
+          Install (about 122 MB of data in total):
 
-          \`\`\`
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/dev/termux/install-termux.sh -o install-termux.sh
+          ```
+          curl -fsSL https://raw.githubusercontent.com/OWNER_REPO/dev/termux/install-termux.sh -o install-termux.sh
           bash install-termux.sh
-          \`\`\`
+          ```
+          NOTES
+          sed -i "s|OWNER_REPO|${GITHUB_REPOSITORY}|" notes.md
 
-          \`opencode.gz\` is the linux/arm64 binary, gzipped (209 MB -> 98 MB).
-          The installer verifies \`opencode.gz.sha256\`, rewrites the ELF
-          interpreter to Termux's glibc loader, writes the resolver config and
-          installs the launcher."
+          if gh release view termux-build >/dev/null 2>&1; then
+            gh release upload termux-build opencode.gz opencode.gz.sha256 --clobber
+            gh release edit termux-build --draft=false --prerelease=false --notes-file notes.md
+          else
+            gh release create termux-build opencode.gz opencode.gz.sha256 \
+              --title "Termux build (linux/arm64)" --notes-file notes.md --latest=false
+          fi
+
+      # Regression guard: a draft release serves 404 to everyone but a token
+      # holder. Fail loudly here instead of on someone's phone.
+      - name: Verify the release is publicly downloadable
+        if: inputs.publish_release
+        run: |
+          set -eux
+          URL="https://github.com/${{ github.repository }}/releases/download/termux-build/opencode.gz"
+          for i in 1 2 3 4 5; do
+            code=$(curl -sIL -o /dev/null -w '%{http_code}' "$URL" || true)
+            [ "$code" = "200" ] && { echo "public: $URL"; exit 0; }
+            echo "attempt $i: HTTP $code, retrying in 15s"; sleep 15
+          done
+          echo "::error::$URL is not publicly downloadable (release is probably a draft)"
+          exit 1
 
       - name: Summary
         run: |
