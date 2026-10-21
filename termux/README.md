@@ -65,7 +65,7 @@ What the workflow does, in one line each:
   `@opencode-ai/pty` get embedded (without this the cross build silently ships x64 natives)
 - `BUN_COMPILE_RELEASE=bun-v1.4.2` → pins the exact Bun runtime that gets baked in
 - `OPENCODE_CHANNEL=termux` → keeps it a preview build: no npm version lookup, no release notes
-- add `--skip-web-ui` if you only care about the TUI (`opencode web` then serves nothing) — saves several minutes
+- add `--skip-web-ui` if you only care about the TUI (`opencode serve` then returns no web UI) — saves several minutes
 
 Download it (CLI or browser):
 
@@ -410,40 +410,69 @@ packages.
 
 ## Keyboard vanishes and tapping won't bring it back
 
-**Cause:** opencode's TUI enables terminal **mouse capture** by default. With capture on, a tap on the
-terminal is delivered to the app as a mouse click, so Termux never treats it as "focus the input" and
-never re-opens the soft keyboard. Termux documents the same behaviour for `vim`/`zellij`: *"It is not
-shown because vim listens for mouse events. Specifically an on-screen click will set the cursor
-position and Termux will not toggle the soft keyboard."*
+**Cause:** the TUI enables terminal **mouse capture** by default, so a tap on the terminal is delivered to
+the app as a mouse click and Termux never re-requests the IME. Termux documents the same behaviour for
+vim/zellij: *"it is not shown because vim listens for mouse events … Termux will not toggle the soft
+keyboard."*
 
-**Fix (permanent, in the app):** turn mouse capture off
+**Instant workaround:** swipe in from the **left edge** → Termux drawer → **KEYBOARD**. No restart, and no
+settings change needed.
+
+**The real fix for phone use: don't use the TUI, use the browser.** `opencode serve` ships the web UI
+inside the binary, so a real `<textarea>` and a normal keyboard are one tab away — see
+[Web UI in a browser](#web-ui-in-a-browser-no-tui).
+
+If you do want to keep the TUI and fix it there, the knob exists (top level of the config, default
+`true`) — it is just not enabled by default here because it disables mouse scrolling in the TUI:
 
 ```jsonc
-// ~/.config/opencode/opencode.jsonc
-{
-  "mouse": false
-}
+// ~/.config/opencode/opencode.jsonc   (optional)
+{ "mouse": false }
 ```
 
-That key is real (`packages/tui/src/config/index.tsx`, default `true`) and lives at the **top level** of
-the config. The installer and the shipped `opencode.jsonc` now write it. Trade-off: no mouse scrolling or
-clicking in the TUI — use the keyboard (`PgUp`/`PgDn`, arrows), which is what you want on a phone anyway.
+Other Android quality-of-life bits:
 
-**Fix (right now, without restarting anything):** swipe in from the **left edge** of the screen to open
-the Termux drawer, then tap **KEYBOARD**. That forces the IME back up even while an app holds mouse
-capture.
+- `tmux` around the TUI: if the IME dies, `Ctrl-b d` then `tmux a` restores the session instead of an
+  app restart.
+- `~/.termux/termux.properties`: `back-key=escape`, `soft-keyboard-toggle-behaviour=show/hide`, then
+  `termux-reload-settings`.
+- Termux resizes the pty on every IME show/hide, so full-screen TUIs repaint — expected, not a crash.
 
-Other things that help on Android:
+## Web UI in a browser (no TUI)
 
-- Run opencode inside `tmux` (`pkg install tmux`, `tmux`, then `opencode`). If the IME dies, detach
-  (`Ctrl-b d`) and re-attach (`tmux a`) — the session survives, and the redraw re-registers the
-  terminal. You stop losing your session to an app restart.
-- `~/.termux/termux.properties`: `back-key=escape` (so Back sends ESC instead of leaving), and
-  `soft-keyboard-toggle-behaviour=show/hide`. Apply with `termux-reload-settings`.
-- Termux resizes the pty on every IME show/hide, which makes full-screen TUIs repaint; that is expected
-  and not a crash.
-- If you mostly type long prompts on the phone, `opencode serve` + the web UI in your browser sidesteps
-  the terminal IME entirely — a real `<textarea>` and a real keyboard.
+There is no `opencode web` command in v2 — `opencode serve` **is** the web server, and it serves the UI
+embedded in the binary at `/` (API at `/api`; the shell loads before auth so the browser shows a sign-in
+screen).
+
+**On the phone itself:**
+
+```bash
+opencode serve --port 4096
+# server listening on http://127.0.0.1:4096
+# server password <32 random chars>
+```
+
+Open `http://127.0.0.1:4096` in Chrome and paste that password. `--hostname` defaults to `127.0.0.1`, so
+this is phone-only.
+
+**From a laptop on the same Wi-Fi** (nice on a phone: big screen, real keyboard):
+
+```bash
+opencode serve --hostname 0.0.0.0 --port 4096
+ip -4 addr show wlan0 | grep inet | awk '{print $2}'   # e.g. 192.168.0.42/24
+```
+
+Then browse to `http://192.168.0.42:4096` on the laptop and paste the password.
+
+Notes:
+
+- Pin the password instead of copying a random one each time:
+  `OPENCODE_PASSWORD=my-secret opencode serve --hostname 0.0.0.0 --port 4096`
+- `--hostname 0.0.0.0` exposes the server to your LAN. Anyone on that network who has the password can
+  drive it, and it can run commands on your phone — use a real password, and don't do this on café Wi-Fi.
+- Run it inside `tmux` (or `termux-wake-lock`) so Android doesn't freeze it when the screen locks.
+- RAM: the server alone is ~156 MB versus ~420 MB for the TUI.
+- Keep the URL bookmarked; the web UI is a normal SPA, so reloads are fine.
 
 ## Troubleshooting
 
@@ -547,7 +576,7 @@ opencode
 ```
 
 That run was triggered by the push, so no build flags were passed: the web UI **is** embedded
-(`opencode web` works). Use the manual dispatch input `skip_web_ui` if you want a faster build
+(`opencode serve` works). Use the manual dispatch input `skip_web_ui` if you want a faster build
 without it.
 
 Tested locally first: the same binary was downloaded and inspected — `ELF 64-bit LSB executable,

@@ -338,10 +338,7 @@ if [ ! -f "$CFG" ]; then
   // interpreter, which does not exist on Android.
   "update": "disable",
   // Language servers cost 300-500 MB each.
-  "lsp": false,
-  // Android: with mouse capture on, tapping the terminal is a mouse click and
-  // Termux never re-opens the soft keyboard. Off = tap to type.
-  "mouse": false
+  "lsp": false
 }
 EOF
 else

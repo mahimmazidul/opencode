@@ -36,12 +36,6 @@
   // No background "warming" requests: saves battery and data on mobile.
   "warming": false,
 
-  // Android keyboard fix. With mouse capture on (the default), tapping the
-  // terminal is delivered as a mouse click, so Termux never re-requests the
-  // soft keyboard and it looks like the keyboard "vanished". Turning capture
-  // off restores tap-to-type. Cost: no mouse scrolling in the TUI.
-  "mouse": false,
-
   // Fewer filesystem watches (Android's inotify is limited).
   "watcher": {
     "ignore": [
