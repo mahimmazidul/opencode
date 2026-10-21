@@ -80,6 +80,16 @@ jobs:
       # Rolling release: tag "termux-build" is recreated on every run, so the
       # install URL stays stable:
       #   https://github.com/<owner>/<repo>/releases/download/termux-build/opencode
+      # 209 MB -> 98 MB with gzip -9, which is ~111 MB less mobile data per
+      # install. gzip is in the Termux base install, so decoding is free.
+      - name: Compress
+        run: |
+          set -eux
+          gzip -9 -c "$OUT_BIN" > opencode.gz
+          sha256sum opencode.gz > opencode.gz.sha256
+          ls -l opencode.gz
+          cat opencode.gz.sha256
+
       - name: Publish rolling release
         if: inputs.publish_release
         env:
@@ -87,22 +97,23 @@ jobs:
         run: |
           set -eux
           gh release delete termux-build --cleanup-tag --yes || true
-          gh release create termux-build "$OUT_BIN" \
+          gh release create termux-build opencode.gz opencode.gz.sha256 \
             --title "Termux build (linux/arm64)" \
             --notes "Self-contained Bun standalone for Termux/aarch64.
 
           Built from \`${{ github.sha }}\` on $(date -u +%F).
 
-          Install on the phone:
+          Install on the phone (about 147 MB of data in total):
 
           \`\`\`
           curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/dev/termux/install-termux.sh -o install-termux.sh
           bash install-termux.sh
           \`\`\`
 
-          This is a glibc linux/arm64 binary; the installer points its ELF
-          interpreter at Termux's glibc loader and adds the launcher + resolver
-          shim."
+          \`opencode.gz\` is the linux/arm64 binary, gzipped (209 MB -> 98 MB).
+          The installer verifies \`opencode.gz.sha256\`, rewrites the ELF
+          interpreter to Termux's glibc loader, writes the resolver config and
+          installs the launcher."
 
       - name: Summary
         run: |
@@ -110,7 +121,7 @@ jobs:
             echo "### opencode for Termux"
             echo ""
             echo "- binary: \`$OUT_BIN\`"
-            echo "- install URL: https://github.com/${{ github.repository }}/releases/download/termux-build/opencode"
+            echo "- download: https://github.com/${{ github.repository }}/releases/download/termux-build/opencode.gz (~98 MB)"
             echo ""
             echo '```'
             echo "curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/dev/termux/install-termux.sh -o install-termux.sh"

@@ -97,9 +97,9 @@ The installer does five things, all of which are mandatory — that is why
 2. `patchelf --set-interpreter` rewrites `PT_INTERP` to that path. (Do **not** instead run
    `grun ./opencode`: Bun standalones locate their embedded payload via `/proc/self/exe`, which under
    `grun` points at `ld.so`, so the binary exits as if it had no payload.)
-3. Builds a ~10 KB `LD_PRELOAD` shim so `/etc/resolv.conf` (absent on Android) resolves to
-   `$PREFIX/etc/resolv.conf` — otherwise DNS/API calls fail — and so bionic children (`bash`, `git`,
-   `rg`) don't inherit a glibc preload.
+3. Writes `$PREFIX/glibc/etc/resolv.conf`, the only resolver path this glibc reads — Android has no
+   `/etc/resolv.conf`, so without it every API call fails. (The old `LD_PRELOAD` shim did this, at the
+   cost of an 86 MB `clang` install; see the data-cost section.)
 4. Writes `$PREFIX/bin/opencode` that clears termux-exec's `LD_PRELOAD`, sets `TMPDIR` (Bun unpacks
    its OpenTUI `libopentui.so` there; Android has no `/tmp`), and re-applies the interpreter patch if
    the binary was replaced.
@@ -118,6 +118,42 @@ Requirements: Termux from **F-Droid/GitHub** (not the abandoned Play Store build
 Android 12+ recommended.
 
 ---
+
+## Data cost on mobile (aarch64)
+
+Everything below is measured from the real repositories and the real artifact, not estimated.
+
+| Item | Download |
+|---|---|
+| `opencode.gz` — the app, gzipped (209.6 MB raw) | **98.1 MB** |
+| Termux `glibc` + `patchelf-glibc` + deps (incl. `gcc-libs-glibc` 24.3 MB) | **35.5 MB** |
+| `ripgrep` + `git` + deps (skipped if you already have them) | **9.0 MB** |
+| apt index refresh (`pkg update`, main + glibc repos) | **~4 MB** |
+| **Total, first install** | **≈ 147 MB** |
+| Subsequent rebuild/reinstall (everything already present) | **≈ 98 MB** |
+
+What it used to cost, and why it changed:
+
+| Old flow | Now |
+|---|---|
+| raw 209.6 MB binary | 98.1 MB gzipped (2.14×, saves 111 MB) |
+| `clang` for building the DNS shim: **86.2 MB** of packages | **0** — the shim is gone |
+| `binutils-glibc` for linking that shim: 18.6 MB extra in the glibc pull | dropped |
+| **≈ 361 MB** | **≈ 147 MB** |
+
+The shim could be dropped because Termux's `glibc` is built with
+`--sysconfdir=$PREFIX/glibc/etc`: `strings libc.so.6` shows it reads
+`/data/data/com.termux/files/usr/glibc/etc/resolv.conf`, never `/etc/resolv.conf`. The installer now
+just writes that file (using Android's own DNS from `getprop net.dns1..4`, falling back to 1.1.1.1),
+so no C compiler is involved anywhere.
+
+Ways to spend even less data:
+
+- Install `ripgrep` and `git` beforehand (or skip `git` if you do not need change tracking) — saves up to 9 MB.
+- Re-runs only download the ~98 MB binary; the glibc layer is cached on the device.
+- If you have Wi-Fi anywhere, do the first install there and only the binary updates will cost ~98 MB later.
+- The binary is a single file: you can also download `opencode.gz` on another machine and
+  `bash install-termux.sh /path/to/opencode.gz`, which skips nothing but lets you use a cheaper link.
 
 ## RAM: what is actually using it
 
@@ -305,7 +341,7 @@ If you want auto-rebuilds back, uncomment:
 |---|---|---|
 | `cannot execute: required file not found` | `PT_INTERP` still `/lib/ld-linux-aarch64.so.1` | re-run the installer (or `patchelf --set-interpreter $PREFIX/glibc/lib/ld-linux-aarch64.so.1`) |
 | `CANNOT LINK EXECUTABLE "cat": ... bad ELF magic` | `LD_LIBRARY_PATH`/`LD_PRELOAD` exported into your shell | `unset LD_LIBRARY_PATH LD_PRELOAD`; never source the launcher, run it |
-| loads, but every API call fails / no DNS | `/etc/resolv.conf` doesn't exist on Android | installer's shim + `$PREFIX/etc/resolv.conf` |
+| loads, but every API call fails / no DNS | Android has no `/etc/resolv.conf` | make sure `$PREFIX/glibc/etc/resolv.conf` has a reachable `nameserver` |
 | `Bad system call` / exit 159 at startup | Android 10/11 seccomp traps `statx`/`clone3` that Bun calls directly | use Android 12+, or the seccomp shim from `HanSoBored/opencode-termux` |
 | TUI renders garbage / monochrome | `TERM` wrong | `export TERM=xterm-256color` |
 | grep/glob tools error | `ripgrep` missing | `pkg install ripgrep` |
@@ -317,7 +353,7 @@ If you want auto-rebuilds back, uncomment:
 ## Files here
 
 - `build-termux.yml` → put at `.github/workflows/build-termux.yml` (manual-dispatch only)
-- `install-termux.sh` → runs **on the phone**, args: `<binary-path-or-url> [--no-shim] [--dir DIR]`;
+- `install-termux.sh` → runs **on the phone**, args: `<binary-path-or-url> [--dir DIR]` (a `.gz` is fine);
   no argument = latest `termux-build` release
 - `opencode.jsonc` → copy to `~/.config/opencode/opencode.jsonc` for the phone-tuned settings
   (`"lsp": false` is the big one)
