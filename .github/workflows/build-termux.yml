@@ -35,9 +35,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Keeps the build self-contained and deterministic: no npm version lookup,
-  # no release notes, quoted-nothing preview channel.
-  OPENCODE_CHANNEL: termux
   # The Bun runtime that gets embedded must be 1.4.2 (package.json pin).
   BUN_COMPILE_RELEASE: bun-v1.4.2
   OUT_BIN: packages/cli/dist/cli-linux-arm64/bin/opencode
@@ -56,11 +53,35 @@ jobs:
       # Cross-compiles to linux/arm64. build.ts also re-installs @opentui/core
       # and @opencode-ai/pty with --os="*" --cpu="*", which is what makes the
       # arm64 native bits end up in an x64-hosted cross build.
+      # IMPORTANT: do not set OPENCODE_CHANNEL. Any channel other than "latest"
+      # makes script/index.ts produce a 0.0.0-<channel>-<build> version, and the
+      # version is what the CLI sends in its User-Agent
+      # (opencode/<channel>/<version>/cli). Services gate on it: with
+      # "0.0.0-termux-N" the free tier answers
+      #   "OpenCode 1.18.0 or newer is required to use the free tier".
+      # OPENCODE_VERSION without a 0.0.0- prefix yields channel=latest.
       - name: Build CLI (linux/arm64)
         run: |
-          bun ./packages/cli/script/build.ts \
+          set -eux
+          VERSION=$(node -p "require('./packages/cli/package.json').version")
+          echo "building opencode $VERSION"
+          OPENCODE_VERSION="$VERSION" bun ./packages/cli/script/build.ts \
             --target=opencode-linux-arm64 \
             ${{ inputs.skip_web_ui && '--skip-web-ui' || '' }}
+          test -x "$OUT_BIN"
+
+      - name: Assert the reported version is real
+        run: |
+          set -eux
+          # the version string is compiled into the binary as a define
+          grep -aqF "OPENCODE_VERSION" "$OUT_BIN" || true
+          if grep -aq "0\.0\.0-termux" "$OUT_BIN"; then
+            echo "::error::artifact still carries a 0.0.0-termux preview version"
+            exit 1
+          fi
+          VERSION=$(node -p "require('./packages/cli/package.json').version")
+          grep -aqF "$VERSION" "$OUT_BIN"
+          echo "artifact reports opencode $VERSION" 
 
       - name: Inspect artifact
         run: |
