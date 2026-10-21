@@ -15,12 +15,12 @@
 #   5. disables opencode's self-updater
 #
 # Data budget (aarch64, mobile data):
-#   opencode.gz    ~98 MB   (209 MB raw, 2.14x gzip)
-#   glibc+patchelf ~36 MB
-#   ripgrep+git     ~9 MB   (skipped when already installed)
-#   apt indexes     ~4 MB
+#   opencode.gz   ~98 MB   (209 MB raw, 2.14x gzip)
+#   glibc         ~11 MB   (patchelf is NOT needed: CI pre-patches PT_INTERP)
+#   ripgrep+git    ~9 MB   (skipped when already installed)
+#   apt indexes    ~4 MB
 #   ----------------------
-#   ~147 MB total
+#   ~122 MB total
 #
 # Usage:
 #   bash install-termux.sh                    # latest CI build of this fork
@@ -160,7 +160,7 @@ what to try, in order:
   3. pkg install -y glibc patchelf-glibc      # run it by hand to see the real error
   4. if that says "Unable to locate package glibc", the glibc repo index is not
      loading; check:  cat $PREFIX/etc/apt/sources.list.d/glibc.list
-     and try:         curl -sI https://packages.termux.dev/apt/termux-glibc/dists/glibc/stable/Release
+     and try:         curl -sI https://packages.termux.dev/apt/termux-glibc/dists/glibc/stable/binary-aarch64/Packages
   5. no glibc at all is needed by the bionic build - see termux/README.md "Alternatives"
 HINT
   die "glibc setup failed; nothing was installed"

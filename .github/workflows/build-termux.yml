@@ -125,11 +125,11 @@ jobs:
           Install (about 122 MB of data in total):
 
           ```
-          curl -fsSL https://raw.githubusercontent.com/OWNER_REPO/dev/termux/install-termux.sh -o install-termux.sh
+          curl -fsSL https://raw.githubusercontent.com/__OWNER_REPO__/dev/termux/install-termux.sh -o install-termux.sh
           bash install-termux.sh
           ```
           NOTES
-          sed -i "s|OWNER_REPO|${GITHUB_REPOSITORY}|" notes.md
+          sed -i "s|__OWNER_REPO__|${GITHUB_REPOSITORY}|" notes.md
 
           if gh release view termux-build >/dev/null 2>&1; then
             gh release upload termux-build opencode.gz opencode.gz.sha256 --clobber

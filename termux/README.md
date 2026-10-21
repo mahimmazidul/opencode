@@ -85,7 +85,7 @@ bash install-termux.sh ~/storage/downloads/opencode
 Or straight from a URL (e.g. a GitHub release you uploaded it to):
 
 ```bash
-bash install-termux.sh https://github.com/you/opencode/releases/download/v-termux/opencode
+bash install-termux.sh https://github.com/mahimmazidul/opencode/releases/download/termux-build/opencode.gz
 ```
 
 The installer does five things, all of which are mandatory — that is why
@@ -139,7 +139,7 @@ What it used to cost, and why it changed:
 | raw 209.6 MB binary | 98.1 MB gzipped (2.14×, saves 111 MB) |
 | `clang` for building the DNS shim: **86.2 MB** of packages | **0** — the shim is gone |
 | `binutils-glibc` for linking that shim: 18.6 MB extra in the glibc pull | dropped |
-| **≈ 361 MB** | **≈ 147 MB** |
+| **≈ 361 MB** | **≈ 122 MB** |
 
 The shim could be dropped because Termux's `glibc` is built with
 `--sysconfdir=$PREFIX/glibc/etc`: `strings libc.so.6` shows it reads
@@ -279,9 +279,10 @@ People who already did that surgery — read their patches instead of starting f
 
 - `bd-loser/opencode-bionic` + `MobileStudio-AndroidIDE/opencode-android-build` — @androidtui (NDK-built
   `libopentui.so` for bionic), `.deb` releases
-- `kimcrowing/opencode-termux` — NDK + Zig build of `libopentui.so`, then bundles opencode onto an
-  Android Bun
-- `Hope2333/opencode-termux`, `Lucas7X7/opencode-termux-native` — native bionic single-ELF releases
+- `MobileStudio-AndroidIDE/opencode-android-build` — NDK-built `libopentui.so` (@androidtui) on a patched
+  Bun, shipped as a Termux `.deb`
+- `Hope2333/opencode-termux`, `Lucas7X7/opencode-termux-native`, `HanSoBored/opencode-termux` — native
+  bionic single-ELF releases
 - `guysoft/opencode-termux` — its **v2 pipeline** now uses exactly this: official Bun 1.4.2 Android
   target + NDK-built `libopentui.so` + a Bun seccomp patch. Best blueprint to copy (see last section)
 
@@ -296,8 +297,10 @@ Possible but unpleasant: the build needs the full monorepo's `node_modules` and 
 the web UI.
 
 ```bash
-# bionic Bun 1.4.x for Termux (official Android build, repackaged)
-curl -fsSL https://raw.githubusercontent.com/Hope2333/bun-termux/main/install.sh | bash
+# bionic Bun for Termux. Upstream has no install.sh any more - use its release .deb
+# (verified: tag Push260522-pure-android, asset bun_1.3.14_aarch64.deb)
+curl -fLO https://github.com/Hope2333/bun-termux/releases/download/Push260522-pure-android/bun_1.3.14_aarch64.deb
+dpkg -i bun_1.3.14_aarch64.deb
 
 git clone --depth 1 https://github.com/mahimmazidul/opencode ~/opencode && cd ~/opencode
 bun install --frozen-lockfile                     # several GB, maybe 3+ GB RAM peak
@@ -402,7 +405,8 @@ If `pkg update` itself prints GPG/signature errors, your Termux is too old — t
 abandoned; install Termux from **F-Droid** or GitHub and start again.
 
 If none of that works, the glibc route is blocked on your device and you do not need it: the native
-bionic build in [Alternatives](#alternatives) requires **zero** apt packages.
+bionic build in [Prebuilt alternative](#prebuilt-alternative-guysoftopencode-termux) requires **zero** apt
+packages.
 
 ## Troubleshooting
 
@@ -486,10 +490,14 @@ Pushed to `mahimmazidul/opencode@dev`:
 - `termux/README.md` — build / install / RAM / troubleshooting
 - `.github/workflows/build-termux.yml` — replaced the broken `go build .` workflow
 
-`build-termux #2` ran green on `7a4fa9c` and published:
-<https://github.com/mahimmazidul/opencode/releases/download/termux-build/opencode>
-(209.6 MB, ELF aarch64, interpreter `/lib/ld-linux-aarch64.so.1`, embedded Bun 1.4.2,
-version `0.0.0-termux-2`).
+Rolling release: <https://github.com/mahimmazidul/opencode/releases/tag/termux-build>
+
+| Asset | Size | Notes |
+|---|---|---|
+| `opencode.gz` | 98.1 MB | ELF aarch64, `PT_INTERP` already points at Termux's glibc loader, embedded Bun 1.4.2 |
+| `opencode.gz.sha256` | 78 B | verified by the installer |
+
+<https://github.com/mahimmazidul/opencode/releases/download/termux-build/opencode.gz>
 
 Install on the phone:
 
