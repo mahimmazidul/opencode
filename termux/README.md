@@ -335,6 +335,56 @@ If you want auto-rebuilds back, uncomment:
       - "termux/**"
 ```
 
+## `pkg install glibc` fails (the most common first-run problem)
+
+The glibc packages live in a **separate Termux repo** (`glibc-repo` adds it). If that repo's index
+does not load, you get exactly this:
+
+```
+[opencode-termux] ERROR: failed to install glibc / patchelf-glibc / binutils-glibc
+```
+
+(the mention of `binutils-glibc` means you are running the *old* installer — the current one installs
+`glibc patchelf-glibc` only and prints the real apt error instead of hiding it)
+
+Try these in order:
+
+```bash
+# 1. what does the phone actually think?
+bash install-termux.sh --diag
+
+# 2. pick a nearby mirror, then retry
+termux-change-repo
+
+# 3. run it by hand to see the real error
+pkg install -y glibc-repo
+pkg update
+apt-cache policy glibc          # should print a Candidate: 2.44
+pkg install -y glibc patchelf-glibc
+```
+
+If step 3 says **`Unable to locate package glibc`**, the repo index never loaded. The glibc repo is
+reachable over two hosts and `glibc.list` only enables the Cloudflare one:
+
+```bash
+cat $PREFIX/etc/apt/sources.list.d/glibc.list
+# deb https://packages-cf.termux.dev/apt/termux-glibc/ glibc stable
+# deb https://packages.termux.dev/apt/termux-glibc/ glibc stable   <- commented fallback
+
+sed -i 's|^deb https://packages-cf\.termux\.dev|deb https://packages.termux.dev|' \
+  $PREFIX/etc/apt/sources.list.d/glibc.list
+pkg update && pkg install -y glibc patchelf-glibc
+```
+
+The current installer does that mirror swap **automatically** and retries, plus `dpkg --configure -a`
+in case an earlier run was interrupted.
+
+If `pkg update` itself prints GPG/signature errors, your Termux is too old — the Play Store build is
+abandoned; install Termux from **F-Droid** or GitHub and start again.
+
+If none of that works, the glibc route is blocked on your device and you do not need it: the native
+bionic build in [Alternatives](#alternatives) requires **zero** apt packages.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |

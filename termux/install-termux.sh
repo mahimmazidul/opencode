@@ -9,34 +9,31 @@
 #   1. installs Termux's glibc runtime (glibc-repo) — Android's bionic cannot run it
 #   2. rewrites the ELF PT_INTERP to $PREFIX/glibc/lib/ld-linux-aarch64.so.1
 #   3. writes $PREFIX/glibc/etc/resolv.conf — Termux's glibc is built with
-#      --sysconfdir=$PREFIX/glibc/etc, so it never looks at /etc/resolv.conf
-#      (this replaces the old LD_PRELOAD shim, and its clang build dependency,
-#      saving ~86 MB of downloads)
+#      --sysconfdir=$PREFIX/glibc/etc, so it never reads /etc/resolv.conf
 #   4. writes a launcher at $PREFIX/bin/opencode that clears termux-exec's
 #      LD_PRELOAD, sets TMPDIR, and self-heals the interpreter patch
-#   5. disables opencode's self-updater (it would install a binary Android
-#      cannot exec)
+#   5. disables opencode's self-updater
 #
-# Data budget (mobile data, aarch64):
-#   opencode.gz  ~98 MB   (209 MB raw, 2.1x gzip)
+# Data budget (aarch64, mobile data):
+#   opencode.gz    ~98 MB   (209 MB raw, 2.14x gzip)
 #   glibc+patchelf ~36 MB
-#   ripgrep+git   ~9 MB  (skipped if already installed)
-#   apt indexes   ~4 MB
+#   ripgrep+git     ~9 MB   (skipped when already installed)
+#   apt indexes     ~4 MB
 #   ----------------------
-#   ~147 MB total, versus ~361 MB for the old shim-based installer.
+#   ~147 MB total
 #
 # Usage:
 #   bash install-termux.sh                    # latest CI build of this fork
 #   bash install-termux.sh ./opencode         # local file (raw or .gz)
 #   bash install-termux.sh https://...        # any URL (raw or .gz)
 #   bash install-termux.sh --dir ~/apps/oc ./opencode
+#   bash install-termux.sh --diag             # only check the environment, install nothing
 #
 set -euo pipefail
 
 PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 : "${HOME:=/data/data/com.termux/files/home}"
 
-# Rolling release published by .github/workflows/build-termux.yml
 DEFAULT_URL="https://github.com/mahimmazidul/opencode/releases/download/termux-build/opencode.gz"
 
 INSTALL_DIR="$HOME/.local/share/opencode-termux"
@@ -47,43 +44,116 @@ LAUNCHER="$PREFIX/bin/opencode"
 GLIBC="$PREFIX/glibc"
 LOADER="$GLIBC/lib/ld-linux-aarch64.so.1"
 GLIBC_RESOLV="$GLIBC/etc/resolv.conf"
+GLIBC_LIST="$PREFIX/etc/apt/sources.list.d/glibc.list"
 SOURCE=""
+DIAG=0
 
 say()  { printf '\033[1;36m[opencode-termux]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[opencode-termux]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[opencode-termux] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 mb()   { du -b "$1" 2>/dev/null | awk '{printf "%.1f MB", $1/1000000}'; }
+have() { command -v "$1" >/dev/null 2>&1; }
+apt_has() { apt-cache policy "$1" 2>/dev/null | grep -q 'Candidate: [0-9]'; }
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# runs a package-manager command, shows real output on failure instead of
+# hiding it behind >/dev/null (that is what made the last run unreadable)
+pm() {
+  local tag="$1"; shift
+  local log="$TMP/pm-$tag.log"
+  if "$@" >"$log" 2>&1; then return 0; fi
+  warn "failed: $*"
+  tail -n 12 "$log" | sed 's/^/    /' >&2
+  return 1
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir) shift; INSTALL_DIR="${1:?--dir needs a value}"
            BIN="$INSTALL_DIR/opencode"; BACKUP="$INSTALL_DIR/opencode.previous"
            STAMP="$INSTALL_DIR/.interp.stamp" ;;
-    -h|--help) sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --diag) DIAG=1 ;;
+    -h|--help) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) die "unknown flag: $1" ;;
     *) [ -z "$SOURCE" ] && SOURCE="$1" || die "only one binary may be given" ;;
   esac
   shift
 done
 
-[ -n "$SOURCE" ] || { SOURCE="$DEFAULT_URL"; say "no binary given - using the latest CI build of this fork"; }
-
 # ---------------------------------------------------------------- sanity ----
-command -v pkg >/dev/null 2>&1 || die "this script must run inside Termux"
+have pkg || die "this script must run inside Termux"
+
+# ------------------------------------------------------------- diagnostics --
+print_diag() {
+  echo
+  say "diagnostics"
+  echo "  termux prefix : $PREFIX"
+  echo "  arch          : $(uname -m)"
+  echo "  termux version: ${TERMUX_VERSION:-unknown}"
+  echo "  glibc loader  : $([ -f "$LOADER" ] && echo present || echo MISSING)"
+  echo "  patchelf      : $(have patchelf && patchelf --version 2>/dev/null || echo missing)"
+  echo "  glibc pkg     : $(apt-cache policy glibc 2>/dev/null | awk '/Candidate/{print $2}')"
+  echo "  glibc repo    : $([ -f "$GLIBC_LIST" ] && echo "configured ($(grep -c '^deb' "$GLIBC_LIST") lines)" || echo "NOT configured")"
+  if [ -f "$GLIBC_LIST" ]; then sed 's/^/                  /' "$GLIBC_LIST"; fi
+  echo "  resolv.conf   : $([ -s "$GLIBC_RESOLV" ] && head -n1 "$GLIBC_RESOLV" || echo missing)"
+  echo "  free space    : $(df -h "$HOME" | awk 'NR==2{print $4}')"
+  echo
+}
+
+if [ "$DIAG" = 1 ]; then print_diag; exit 0; fi
+
 case "$(uname -m)" in
   aarch64|arm64) ;;
   *) die "Termux aarch64 only (uname -m = $(uname -m))" ;;
 esac
 
 # ------------------------------------------------------------ glibc layer ---
-# glibc + patchelf-glibc pull ~36 MB. binutils-glibc is NOT installed: it is
-# only needed to link the old DNS shim, which is gone.
-if [ ! -f "$LOADER" ] || ! command -v patchelf >/dev/null 2>&1; then
+# glibc + patchelf-glibc pull ~36 MB. binutils-glibc is NOT installed: it was
+# only needed to link the old DNS shim, which no longer exists.
+ensure_glibc() {
+  if [ -f "$LOADER" ] && apt_has patchelf-glibc; then return 0; fi
+
   say "installing Termux glibc runtime (~36 MB)"
-  pkg install -y glibc-repo >/dev/null 2>&1 || die "failed to install glibc-repo"
-  pkg update -y >/dev/null 2>&1 || true
-  pkg install -y glibc patchelf-glibc >/dev/null 2>&1 \
-    || die "failed to install glibc / patchelf-glibc"
+  if ! pm glibc-repo pkg install -y glibc-repo; then
+    warn "could not install glibc-repo (see the error above)"
+    return 1
+  fi
+
+  if ! pm update1 pkg update -y; then warn "pkg update reported errors, trying anyway"; fi
+
+  if ! pm glibc pkg install -y glibc patchelf-glibc; then
+    # Most common cause on a phone: the glibc index never loaded, because the
+    # Cloudflare mirror in glibc.list is unreachable or blocked on this network.
+    # The repo also publishes a non-Cloudflare endpoint; swap to it and retry.
+    if [ -f "$GLIBC_LIST" ] && grep -q 'packages-cf\.termux\.dev' "$GLIBC_LIST"; then
+      say "retrying with packages.termux.dev (non-Cloudflare mirror)"
+      sed -i 's|^deb https://packages-cf\.termux\.dev|deb https://packages.termux.dev|' "$GLIBC_LIST"
+      pm update2 pkg update -y || warn "pkg update still reporting errors"
+      if pm glibc2 pkg install -y glibc patchelf-glibc; then return 0; fi
+    fi
+    # dpkg may have been left half-configured by an earlier interrupted install
+    say "attempting dpkg --configure -a, then one final retry"
+    pm configure dpkg --configure -a || true
+    pm glibc3 pkg install -y glibc patchelf-glibc || return 1
+  fi
+  return 0
+}
+
+if ! ensure_glibc; then
+  print_diag
+  cat >&2 <<'HINT'
+what to try, in order:
+  1. termux-change-repo        # pick a mirror close to you, then re-run this script
+  2. pkg upgrade               # if you are on the Play Store Termux, switch to F-Droid first
+  3. pkg install -y glibc patchelf-glibc      # run it by hand to see the real error
+  4. if that says "Unable to locate package glibc", the glibc repo index is not
+     loading; check:  cat $PREFIX/etc/apt/sources.list.d/glibc.list
+     and try:         curl -sI https://packages.termux.dev/apt/termux-glibc/dists/glibc/stable/Release
+  5. no glibc at all is needed by the bionic build - see termux/README.md "Alternatives"
+HINT
+  die "glibc setup failed; nothing was installed"
 fi
 [ -f "$LOADER" ] || die "glibc loader missing at $LOADER"
 
@@ -92,18 +162,16 @@ PATCHELF="$(command -v patchelf || true)"
 [ -x "$PATCHELF" ] || die "patchelf not found (pkg install patchelf-glibc)"
 
 # ----------------------------------------------------------- dns + tools ----
-# Termux's glibc reads $PREFIX/glibc/etc/resolv.conf (verified: the path is
-# baked into libc.so.6). Android has no /etc/resolv.conf at all.
+# Termux's glibc reads $PREFIX/glibc/etc/resolv.conf (the path is baked into
+# libc.so.6). Android has no /etc/resolv.conf at all.
 if [ ! -s "$GLIBC_RESOLV" ] || ! grep -q '^nameserver' "$GLIBC_RESOLV" 2>/dev/null; then
   say "configuring DNS in $GLIBC_RESOLV"
   mkdir -p "$(dirname "$GLIBC_RESOLV")"
   {
-    # Prefer the carrier/network resolver Android already knows about;
-    # some mobile networks block third-party DNS.
     for p in net.dns1 net.dns2 net.dns3 net.dns4; do
       ip="$(getprop "$p" 2>/dev/null || true)"
       case "$ip" in
-        ""|0.0.0.0|::1|"::"|"") ;;
+        ""|0.0.0.0|::1|"::") ;;
         *) printf 'nameserver %s\n' "$ip" ;;
       esac
     done
@@ -113,16 +181,14 @@ if [ ! -s "$GLIBC_RESOLV" ] || ! grep -q '^nameserver' "$GLIBC_RESOLV" 2>/dev/nu
   } >> "$GLIBC_RESOLV"
 fi
 
-# ripgrep powers the grep/glob tools; git powers change tracking.
-# Both are tiny (~9 MB together) and skipped when present.
-command -v rg >/dev/null 2>&1 || { say "installing ripgrep (~1 MB)"; pkg install -y ripgrep >/dev/null 2>&1 || warn "ripgrep install failed"; }
-command -v git >/dev/null 2>&1 || { say "installing git (~8 MB)"; pkg install -y git >/dev/null 2>&1 || warn "git install failed"; }
-command -v gzip >/dev/null 2>&1 || pkg install -y gzip >/dev/null 2>&1 || true
+have rg  || { say "installing ripgrep (~1 MB)";  pm rg  pkg install -y ripgrep || warn "ripgrep install failed"; }
+have git || { say "installing git (~8 MB)";      pm git pkg install -y git     || warn "git install failed"; }
+have gzip || pm gz pkg install -y gzip || true
 
 # ---------------------------------------------------------------- binary ----
 mkdir -p "$INSTALL_DIR"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+
+[ -n "$SOURCE" ] || { SOURCE="$DEFAULT_URL"; say "no binary given - using the latest CI build of this fork"; }
 
 case "$SOURCE" in
   http://*|https://*)
@@ -131,7 +197,6 @@ case "$SOURCE" in
       die "download failed: $SOURCE"
     fi
     say "downloaded $(mb "$TMP/dl")"
-    # verify against <url>.sha256 when the release publishes one
     if curl -fsL --max-time 20 "$SOURCE.sha256" -o "$TMP/dl.sha256" 2>/dev/null; then
       want="$(cut -d' ' -f1 < "$TMP/dl.sha256")"
       got="$(sha256sum "$TMP/dl" | cut -d' ' -f1)"
@@ -140,7 +205,7 @@ case "$SOURCE" in
       fi
       say "sha256 ok"
     else
-      warn "no .sha256 published next to $SOURCE - skipping checksum verification"
+      warn "no .sha256 next to $SOURCE - skipping checksum verification"
     fi
     ;;
   *)
@@ -150,7 +215,6 @@ case "$SOURCE" in
     ;;
 esac
 
-# .gz transparently (the release ships a gzipped binary: 98 MB instead of 209 MB)
 if [ "$(head -c 2 "$TMP/dl" | od -An -tx1 | tr -d ' \n')" = "1f8b" ]; then
   say "decompressing"
   gzip -dc "$TMP/dl" > "$TMP/opencode" || die "gunzip failed"
@@ -159,7 +223,6 @@ else
   mv "$TMP/dl" "$TMP/opencode"
 fi
 
-# sanity: ELF magic + aarch64 e_machine, so a wrong artifact fails early
 head -c 4 "$TMP/opencode" | od -An -tx1 | grep -q "7f 45 4c 46" || die "not an ELF file"
 MACHINE="$(od -An -tx1 -j18 -N2 "$TMP/opencode" | tr -d ' \n')"
 [ "$MACHINE" = "b700" ] || die "not an aarch64 binary (e_machine=$MACHINE)"
@@ -174,6 +237,7 @@ if ! env -u LD_PRELOAD -u LD_LIBRARY_PATH TMPDIR="$PREFIX/tmp" \
       "$TMP/opencode" --version >"$TMP/ver" 2>"$TMP/err"; then
   warn "opencode --version failed:"
   sed 's/^/    /' "$TMP/err" >&2 || true
+  print_diag
   die "binary did not start; nothing was installed"
 fi
 VER="$(head -n1 "$TMP/ver")"
@@ -186,7 +250,6 @@ touch "$STAMP"
 say "writing launcher $LAUNCHER"
 cat > "$LAUNCHER" <<'LAUNCH'
 #!/data/data/com.termux/files/usr/bin/sh
-# opencode launcher - runs the linux/arm64 build through Termux's glibc loader
 PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 HOME_DIR="${HOME:-/data/data/com.termux/files/home}"
 DIR="$HOME_DIR/.local/share/opencode-termux"
@@ -195,12 +258,9 @@ STAMP="$DIR/.interp.stamp"
 GLIBC="$PREFIX/glibc"
 LOADER="$GLIBC/lib/ld-linux-aarch64.so.1"
 
-# termux-exec injects a bionic LD_PRELOAD that glibc cannot load
 unset LD_PRELOAD
 unset LD_LIBRARY_PATH
 
-# self-heal: an in-app update replaces the binary with one that has the stock
-# interpreter, which does not exist on Android
 if [ -x "$BIN" ] && { [ ! -f "$STAMP" ] || [ "$BIN" -nt "$STAMP" ]; }; then
   if [ -x "$GLIBC/bin/patchelf" ]; then
     "$GLIBC/bin/patchelf" --set-interpreter "$LOADER" "$BIN" 2>/dev/null || :
@@ -226,11 +286,9 @@ if [ ! -f "$CFG" ]; then
   cat > "$CFG" <<'EOF'
 {
   // Termux: the official updater downloads a glibc binary with the stock ELF
-  // interpreter, which does not exist on Android. Update by re-running
-  // install-termux.sh with a freshly built binary instead.
+  // interpreter, which does not exist on Android.
   "update": "disable",
-  // Language servers cost 300-500 MB each. Set true if you need them and have
-  // the RAM; `pkg install nodejs` is required for most.
+  // Language servers cost 300-500 MB each.
   "lsp": false
 }
 EOF
