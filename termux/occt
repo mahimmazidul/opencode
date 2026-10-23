@@ -1,0 +1,91 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# occt - opencode credential switcher
+#
+# Lists the credentials opencode has stored and switches between them without
+# logging out. Wraps `opencode auth list` / `opencode auth switch`, so it works
+# with every integration (opencode, google, anthropic, openrouter, ...).
+#
+# Usage:
+#   occt                # numbered picker
+#   occt list           # just list
+#   occt 2              # switch to entry #2
+#   occt google work    # integration + credential label, straight through
+#
+# Note: `opencode auth list` does not expose which credential is active
+# (ConnectionInfo has no "active" field), so this script remembers the last
+# switch in ~/.local/state/opencode/occt.last and marks it.
+
+set -eu
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/opencode"
+STATE="$STATE_DIR/occt.last"
+
+die() { printf 'occt: %s\n' "$*" >&2; exit 1; }
+command -v opencode >/dev/null 2>&1 || die "opencode not found on PATH"
+
+# Auth list output is laid out as:
+#   <integration, padEnd(width)>  <label, padEnd(28)>  <stored|environment>
+# so split from the right: type is the last word, label is the previous 28
+# columns, integration is whatever is left.
+entries() {
+  opencode auth list 2>/dev/null | sed '/^$/d' | awk '
+    {
+      line = $0
+      type = "stored"
+      if (line ~ / environment$/) { type = "environment"; sub(/ environment$/, "", line) }
+      else sub(/ stored$/, "", line)
+      if (length(line) < 29) next
+      label = substr(line, length(line) - 27)
+      integ = substr(line, 1, length(line) - 28)
+      gsub(/^[ \t]+|[ \t]+$/, "", label)
+      gsub(/^[ \t]+|[ \t]+$/, "", integ)
+      if (integ == "" || label == "") next
+      printf "%s\t%s\t%s\n", integ, label, type
+    }'
+}
+
+last_switch() {
+  [ -f "$STATE" ] && cat "$STATE" 2>/dev/null || true
+}
+
+switch_to() {
+  sel="$(entries | awk -F'\t' -v n="$1" 'NR==n { printf "%s\t%s", $1, $2 }')"
+  [ -n "$sel" ] || die "no entry #$1"
+  integ="${sel%%	*}"; label="${sel#*	}"
+  printf 'switching %s -> %s\n' "$integ" "$label"
+  opencode auth switch "$integ" "$label" || die "switch failed"
+  mkdir -p "$STATE_DIR"; printf '%s %s' "$integ" "$label" > "$STATE"
+}
+
+cmd="${1:-pick}"
+
+case "$cmd" in
+  list|ls)
+    entries | awk -F'\t' -v last="$(last_switch)" '
+      { n++; mark = ($1 " " $2 == last) ? " *" : ""
+        printf "%2d) %-14s %-20s %s%s\n", n, $1, $2, $3, mark }'
+    [ -n "$(entries)" ] || echo "no stored credentials - run: opencode auth login"
+    ;;
+  [0-9]*)
+    switch_to "$1"
+    ;;
+  pick)
+    entries | awk -F'\t' -v last="$(last_switch)" '
+      { n++; mark = ($1 " " $2 == last) ? " *" : ""
+        printf "%2d) %-14s %-20s %s%s\n", n, $1, $2, $3, mark }'
+    n="$(entries | wc -l | tr -d ' ')"
+    [ "$n" -gt 0 ] || die "no stored credentials - run: opencode auth login"
+    printf 'pick 1-%s (Enter = cancel): ' "$n"
+    read -r choice || exit 0
+    [ -n "${choice:-}" ] || exit 0
+    [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "$n" ] || die "invalid choice: $choice"
+    switch_to "$choice"
+    ;;
+  *)
+    # occt <integration> <label>
+    [ $# -ge 2 ] || die "usage: occt [list | <number> | <integration> <label>]"
+    integ="$1"; label="$2"
+    printf 'switching %s -> %s\n' "$integ" "$label"
+    opencode auth switch "$integ" "$label" || die "switch failed"
+    mkdir -p "$STATE_DIR"; printf '%s %s' "$integ" "$label" > "$STATE"
+    ;;
+esac

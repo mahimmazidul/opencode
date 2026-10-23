@@ -438,6 +438,43 @@ Other Android quality-of-life bits:
   `termux-reload-settings`.
 - Termux resizes the pty on every IME show/hide, so full-screen TUIs repaint — expected, not a crash.
 
+## Multiple accounts without logging out
+
+opencode stores credentials **per integration, many per provider** — `auth login` adds a labelled
+credential (`credential.create` / `integration.connect.key`), it does not replace the previous one.
+Verified in the auth core:
+
+| Command | Handler | What it calls |
+|---|---|---|
+| `opencode auth login` | `auth/login.ts` | `integration.connect.key` / `integration.oauth.connect` with a `label` |
+| `opencode auth list` | `auth/list.ts` | lists every connection (`type: credential`, with `label`) |
+| `opencode auth switch` | `auth/switch.ts` | `credential.activate({ credentialID })` |
+
+So, two accounts on the same provider:
+
+```bash
+opencode auth login          # account A - give it a recognisable label
+opencode auth login          # account B - different label
+opencode auth list           # both are listed
+opencode auth switch         # picker
+opencode auth switch opencode work   # non-interactive: integration + label
+```
+
+`termux/occt` wraps that into a numbered picker (no jq/python needed; it parses `auth list` and
+remembers the last switch, because `ConnectionInfo` has no "active" field so `auth list` cannot show it):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mahimmazidul/opencode/dev/termux/occt -o $PREFIX/bin/occt
+chmod +x $PREFIX/bin/occt
+occt            # 1) opencode  personal   stored
+                # 2) opencode  work       stored *
+occt 2          # switch
+```
+
+**What is not provided: automatic switching when a limit is hit.** Rotating accounts to keep consuming a
+per-account free quota is quota evasion, not account management, and most free tiers are one-per-person —
+so it is deliberately not implemented here, in the installer, or as a plugin.
+
 ## Web UI in a browser (no TUI)
 
 There is no `opencode web` command in v2 — `opencode serve` **is** the web server, and it serves the UI
